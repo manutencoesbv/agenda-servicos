@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Agendamento de Serviço</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background:#f6f7f9; }
+    .wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
+    .card { background:#fff; border-radius: 14px; padding: 16px; box-shadow: 0 6px 20px rgba(0,0,0,.06); }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    label { display:block; font-size: 14px; margin: 12px 0 6px; }
+    input, select, textarea, button {
+      width: 100%; font-size: 16px; padding: 12px; border-radius: 12px;
+      border: 1px solid #d6d9df; background:#fff; box-sizing: border-box;
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    .row { display:flex; gap: 10px; }
+    .row > div { flex:1; }
+    .hint { font-size: 12px; color:#586174; margin-top: 6px; }
+    .check { display:flex; align-items:center; gap:10px; margin-top: 12px; }
+    .check input { width: 22px; height: 22px; padding:0; }
+    button { margin-top: 14px; font-weight: 700; border: none; cursor: pointer; }
+    .msg { margin-top: 12px; padding: 12px; border-radius: 12px; font-size: 14px; }
+    .ok { background:#e9f9ef; color:#0b5; border:1px solid #bfe9cc; }
+    .err { background:#fdecec; color:#b11; border:1px solid #f3c0c0; }
+    .small { font-size: 12px; color:#667; margin-top: 10px; }
+
+    /* Confirm modal */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      display: none; align-items: center; justify-content: center; padding: 18px;
+    }
+    .modal {
+      width: 100%; max-width: 520px; background: #fff; border-radius: 16px;
+      padding: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.2);
+    }
+    .modal h2 { margin: 0 0 10px; font-size: 18px; }
+    .kv { background:#f6f7f9; border-radius: 12px; padding: 12px; }
+    .kv p { margin: 8px 0; font-size: 15px; }
+    .kv strong { display:inline-block; min-width: 120px; }
+    .btn2 { background:#111; color:#fff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Agendar Serviço</h1>
+
+      <label for="servico">Tipo de serviço</label>
+      <select id="servico" required>
+        <option value="">Selecione…</option>
+        <option>Manutenção</option>
+        <option>Instalação</option>
+        <option>Reparo</option>
+        <option>Visita técnica</option>
+      </select>
+
+      <div class="row">
+        <div>
+          <label for="data">Dia</label>
+          <input id="data" type="date" required />
+        </div>
+        <div>
+          <label for="hora">Horário (1h)</label>
+          <select id="hora" required>
+            <option value="">Selecione…</option>
+            <option>13:00</option>
+            <option>14:00</option>
+            <option>15:00</option>
+            <option>16:00</option>
+            <option>17:00</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="endereco">Local / Endereço</label>
+      <input id="endereco" type="text" placeholder="Rua, número, bairro, cidade" required />
+
+      <label for="observacao">Observação (opcional)</label>
+      <textarea id="observacao" placeholder="Ex.: problema, referência, como chegar…"></textarea>
+
+      <div class="check">
+        <input id="urgencia" type="checkbox" />
+        <label for="urgencia" style="margin:0; font-size:16px;">Urgência (preciso de horário especial)</label>
+      </div>
+
+      <div id="extra" style="display:none;">
+        <label for="horario_especial">Horário especial desejado (opcional)</label>
+        <input id="horario_especial" type="text" placeholder="Ex.: hoje após 18h / amanhã 10h" />
+        <div class="hint">Marque urgência apenas se precisar fora dos horários normais.</div>
+      </div>
+
+      <button id="btn" class="btn2">Confirmar agendamento</button>
+
+      <div id="msg"></div>
+      <div class="small">Horários disponíveis: 13:00–18:00 (turnos de 1 hora).</div>
+    </div>
+  </div>
+
+  <!-- CONFIRMAÇÃO -->
+  <div id="overlay" class="overlay" role="dialog" aria-modal="true" aria-label="Confirmação">
+    <div class="modal">
+      <h2>Reserva confirmada ✅</h2>
+      <div class="kv" id="resumo"></div>
+      <button id="nova" class="btn2">Fazer outra reserva</button>
+      <div class="small">Se precisar alterar, entre em contato pelo canal habitual.</div>
+    </div>
+  </div>
+
+<script>
+  // ==== CONFIG ====
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxLVQomngUoq8skxDtOw-Za-VyMf4R9kRW7oZEogRTGw0bMm57rANffcl96ZzpBWzKG/exec";
+  const PIN = "1234"; // o mesmo do Apps Script
+
+  const el = (id) => document.getElementById(id);
+  const msgBox = el("msg");
+
+  const overlay = el("overlay");
+  const resumo = el("resumo");
+
+  el("urgencia").addEventListener("change", (e) => {
+    el("extra").style.display = e.target.checked ? "block" : "none";
+  });
+
+  function setMsg(text, ok=true) {
+    msgBox.className = "msg " + (ok ? "ok" : "err");
+    msgBox.textContent = text;
+  }
+
+  function formatDateBR(yyyy_mm_dd) {
+    // "2026-02-22" -> "22/02/2026"
+    if (!yyyy_mm_dd || !yyyy_mm_dd.includes("-")) return yyyy_mm_dd;
+    const [y,m,d] = yyyy_mm_dd.split("-");
+    return `${d}/${m}/${y}`;
+  }
+
+  function showConfirmation(p) {
+    const lines = [];
+    lines.push(`<p><strong>Serviço:</strong> ${escapeHtml(p.servico)}</p>`);
+    lines.push(`<p><strong>Data:</strong> ${escapeHtml(formatDateBR(p.data))}</p>`);
+    lines.push(`<p><strong>Horário:</strong> ${escapeHtml(p.hora)} (1h)</p>`);
+    lines.push(`<p><strong>Endereço:</strong> ${escapeHtml(p.endereco)}</p>`);
+    if (p.observacao) lines.push(`<p><strong>Obs.:</strong> ${escapeHtml(p.observacao)}</p>`);
+    lines.push(`<p><strong>Urgência:</strong> ${p.urgencia ? "Sim" : "Não"}</p>`);
+    if (p.urgencia && p.horario_especial) {
+      lines.push(`<p><strong>Horário especial:</strong> ${escapeHtml(p.horario_especial)}</p>`);
+    }
+    resumo.innerHTML = lines.join("");
+    overlay.style.display = "flex";
+  }
+
+  function resetForm() {
+    el("servico").value = "";
+    el("data").value = "";
+    el("hora").value = "";
+    el("endereco").value = "";
+    el("observacao").value = "";
+    el("urgencia").checked = false;
+    el("extra").style.display = "none";
+    el("horario_especial").value = "";
+    msgBox.className = "";
+    msgBox.textContent = "";
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
+
+  el("nova").addEventListener("click", () => {
+    overlay.style.display = "none";
+    resetForm();
+  });
+
+  // Cierra al tocar afuera (opcional)
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.style.display = "none";
+  });
+
+  el("btn").addEventListener("click", async () => {
+    msgBox.className = "";
+    msgBox.textContent = "";
+
+    const payload = {
+      k: PIN,
+      servico: el("servico").value.trim(),
+      data: el("data").value,
+      hora: el("hora").value,
+      endereco: el("endereco").value.trim(),
+      observacao: el("observacao").value.trim(),
+      urgencia: el("urgencia").checked,
+      horario_especial: el("horario_especial")?.value?.trim() || ""
+    };
+
+    if (!payload.servico || !payload.data || !payload.hora || !payload.endereco) {
+      setMsg("Por favor, preencha: serviço, dia, horário e endereço.", false);
+      return;
+    }
+
+    el("btn").disabled = true;
+    el("btn").textContent = "Salvando…";
+
+    try {
+      const res = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || !out.ok) {
+        setMsg(out.error || "Não foi possível registrar. Tente novamente.", false);
+      } else {
+        // Confirmación final
+        showConfirmation(payload);
+      }
+    } catch (err) {
+      setMsg("Erro de conexão. Verifique sua internet e tente novamente.", false);
+    } finally {
+      el("btn").disabled = false;
+      el("btn").textContent = "Confirmar agendamento";
+    }
+  });
+</script>
+</body>
+</html>
