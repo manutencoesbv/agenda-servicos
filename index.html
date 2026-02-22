@@ -193,53 +193,67 @@
 
   // Limites del calendario: hoy .. hoy+30
   (function initDateLimits(){
-    const today = new Date();
-    const min = ymd(today);
-    const maxDate = new Date(today);
-    maxDate.setDate(maxDate.getDate() + ALLOW_FUTURE_DAYS);
+  const today = new Date();
 
-    el("data").min = min;
-    el("data").max = ymd(maxDate);
-    el("data").value = min;
+  // si hoy es domingo, arrancar en lunes
+  let initial = new Date(today);
+  if (initial.getDay() === 0) {
+    initial.setDate(initial.getDate() + 1);
+  }
 
-    el("dateNote").textContent = `Você pode agendar de hoje até ${ALLOW_FUTURE_DAYS} dias à frente.`;
-  })();
+  const min = ymd(today);
+  const maxDate = new Date(today);
+  maxDate.setDate(maxDate.getDate() + ALLOW_FUTURE_DAYS);
+
+  el("data").min = min;
+  el("data").max = ymd(maxDate);
+
+  el("data").value = ymd(initial);
+
+  el("dateNote").textContent =
+    `Você pode agendar de hoje até ${ALLOW_FUTURE_DAYS} dias à frente. (Não atendemos aos domingos.)`;
+})();
 
   // Bloqueo de horas ocupadas + domingo
   async function refreshBookedHours(){
-    const date = el("data").value;
-    if (!date) return;
+  const date = el("data").value;
+  if (!date) return;
 
-    // Bloquear domingos (frontend)
-    const dt = new Date(date + "T00:00:00");
-    if (dt.getDay() === 0) {
-      alert("Não é possível fazer reserva aos domingos.");
-      // volta para hoje
-      const today = new Date();
-      el("data").value = ymd(today);
-      return refreshBookedHours();
-    }
+  const dt = new Date(date + "T00:00:00");
 
-    const hourSelect = el("hora");
-    [...hourSelect.options].forEach(opt => { if (opt.value) opt.disabled = false; });
+  // si el usuario selecciona domingo
+  if (dt.getDay() === 0) {
+    alert("Não é possível agendar serviços para domingo. Escolha outro dia.");
 
-    const url = `${SCRIPT_URL}?k=${encodeURIComponent(PIN)}&date=${encodeURIComponent(date)}`;
+    const next = new Date(dt);
+    next.setDate(next.getDate() + 1);
 
-    try {
-      const res = await fetch(url);
-      const out = await res.json();
-      if (!out.ok) return;
-
-      const booked = new Set(out.booked || []);
-      [...hourSelect.options].forEach(opt => {
-        if (booked.has(opt.value)) opt.disabled = true;
-      });
-
-      if (booked.has(hourSelect.value)) hourSelect.value = "";
-    } catch (e) {
-      // si falla, no bloqueamos en UI; backend igual protege la doble reserva
-    }
+    el("data").value = ymd(next);
+    return refreshBookedHours();
   }
+
+  const hourSelect = el("hora");
+  [...hourSelect.options].forEach(opt => {
+    if (opt.value) opt.disabled = false;
+  });
+
+  const url = `${SCRIPT_URL}?k=${encodeURIComponent(PIN)}&date=${encodeURIComponent(el("data").value)}`;
+
+  try {
+    const res = await fetch(url);
+    const out = await res.json();
+    if (!out.ok) return;
+
+    const booked = new Set(out.booked || []);
+    [...hourSelect.options].forEach(opt => {
+      if (booked.has(opt.value)) opt.disabled = true;
+    });
+
+    if (booked.has(hourSelect.value)) hourSelect.value = "";
+  } catch (e) {
+    // backend protege igual
+  }
+}
 
   el("data").addEventListener("change", refreshBookedHours);
   setTimeout(refreshBookedHours, 0);
