@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="pt-BR">
 <head>
@@ -25,6 +26,7 @@
     .ok { background:#e9f9ef; color:#0b5; border:1px solid #bfe9cc; }
     .err { background:#fdecec; color:#b11; border:1px solid #f3c0c0; }
     .small { font-size: 12px; color:#667; margin-top: 10px; }
+    .disabled-note { font-size: 12px; color:#7a808c; margin-top: 6px; }
 
     /* Confirm modal */
     .overlay {
@@ -61,6 +63,7 @@
         <div>
           <label for="data">Dia</label>
           <input id="data" type="date" required />
+          <div class="disabled-note" id="dateNote"></div>
         </div>
         <div>
           <label for="hora">Horário (1h)</label>
@@ -72,6 +75,7 @@
             <option>16:00</option>
             <option>17:00</option>
           </select>
+          <div class="disabled-note">Horários desabilitados já estão reservados.</div>
         </div>
       </div>
 
@@ -79,7 +83,7 @@
       <input id="endereco" type="text" placeholder="Rua, número, bairro, cidade" required />
 
       <label for="observacao">Descrição Serviço</label>
-      <textarea id="observacao" placeholder="Ex.: vazamento na torneira, troca de torneira.. "></textarea>
+      <textarea id="observacao" placeholder="Ex.: vazamento na pia, troca de reparo do chuveiro.."></textarea>
 
       <div class="check">
         <input id="urgencia" type="checkbox" />
@@ -95,7 +99,7 @@
       <button id="btn" class="btn2">Confirmar agendamento</button>
 
       <div id="msg"></div>
-      <div class="small">Horários disponíveis: 13:00–18:00 (turnos de 1 hora).</div>
+      <div class="small">Horários disponíveis: 13:00–18:00 (turnos de 1 hora). Não atendemos aos domingos.</div>
     </div>
   </div>
 
@@ -110,13 +114,14 @@
   </div>
 
 <script>
-  // ==== CONFIG ====
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxLVQomngUoq8skxDtOw-Za-VyMf4R9kRW7oZEogRTGw0bMm57rANffcl96ZzpBWzKG/exec";
-  const PIN = "1234"; // o mesmo do Apps Script
+  // =================== CONFIG ===================
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxLVQomngUoq8skxDtOw-Za-VyMf4R9kRW7oZEogRTGw0bMm57rANffcl96ZzpBWzKG/exec"; // termina em /exec
+  const PIN = "1234"; // mesmo PIN do Apps Script
+  const ALLOW_FUTURE_DAYS = 30; // deve bater com o Apps Script
+  // =============================================
 
   const el = (id) => document.getElementById(id);
   const msgBox = el("msg");
-
   const overlay = el("overlay");
   const resumo = el("resumo");
 
@@ -129,11 +134,23 @@
     msgBox.textContent = text;
   }
 
+  function ymd(dateObj){
+    const y = dateObj.getFullYear();
+    const m = String(dateObj.getMonth()+1).padStart(2,"0");
+    const d = String(dateObj.getDate()).padStart(2,"0");
+    return `${y}-${m}-${d}`;
+  }
+
   function formatDateBR(yyyy_mm_dd) {
-    // "2026-02-22" -> "22/02/2026"
     if (!yyyy_mm_dd || !yyyy_mm_dd.includes("-")) return yyyy_mm_dd;
     const [y,m,d] = yyyy_mm_dd.split("-");
     return `${d}/${m}/${y}`;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
   }
 
   function showConfirmation(p) {
@@ -151,9 +168,9 @@
     overlay.style.display = "flex";
   }
 
-  function resetForm() {
+  function resetForm(keepDate=true) {
     el("servico").value = "";
-    el("data").value = "";
+    if (!keepDate) el("data").value = "";
     el("hora").value = "";
     el("endereco").value = "";
     el("observacao").value = "";
@@ -164,22 +181,70 @@
     msgBox.textContent = "";
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    }[c]));
-  }
-
   el("nova").addEventListener("click", () => {
     overlay.style.display = "none";
-    resetForm();
+    resetForm(true);
+    refreshBookedHours(); // para actualizar bloqueos
   });
 
-  // Cierra al tocar afuera (opcional)
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) overlay.style.display = "none";
   });
 
+  // Limites del calendario: hoy .. hoy+30
+  (function initDateLimits(){
+    const today = new Date();
+    const min = ymd(today);
+    const maxDate = new Date(today);
+    maxDate.setDate(maxDate.getDate() + ALLOW_FUTURE_DAYS);
+
+    el("data").min = min;
+    el("data").max = ymd(maxDate);
+    el("data").value = min;
+
+    el("dateNote").textContent = `Você pode agendar de hoje até ${ALLOW_FUTURE_DAYS} dias à frente.`;
+  })();
+
+  // Bloqueo de horas ocupadas + domingo
+  async function refreshBookedHours(){
+    const date = el("data").value;
+    if (!date) return;
+
+    // Bloquear domingos (frontend)
+    const dt = new Date(date + "T00:00:00");
+    if (dt.getDay() === 0) {
+      alert("Não é possível fazer reserva aos domingos.");
+      // volta para hoje
+      const today = new Date();
+      el("data").value = ymd(today);
+      return refreshBookedHours();
+    }
+
+    const hourSelect = el("hora");
+    [...hourSelect.options].forEach(opt => { if (opt.value) opt.disabled = false; });
+
+    const url = `${SCRIPT_URL}?k=${encodeURIComponent(PIN)}&date=${encodeURIComponent(date)}`;
+
+    try {
+      const res = await fetch(url);
+      const out = await res.json();
+      if (!out.ok) return;
+
+      const booked = new Set(out.booked || []);
+      [...hourSelect.options].forEach(opt => {
+        if (booked.has(opt.value)) opt.disabled = true;
+      });
+
+      if (booked.has(hourSelect.value)) hourSelect.value = "";
+    } catch (e) {
+      // si falla, no bloqueamos en UI; backend igual protege la doble reserva
+    }
+  }
+
+  el("data").addEventListener("change", refreshBookedHours);
+  setTimeout(refreshBookedHours, 0);
+
+  // Enviar reserva
   el("btn").addEventListener("click", async () => {
     msgBox.className = "";
     msgBox.textContent = "";
@@ -200,6 +265,13 @@
       return;
     }
 
+    // Bloquear domingo también acá (por si acaso)
+    const dt = new Date(payload.data + "T00:00:00");
+    if (dt.getDay() === 0) {
+      setMsg("Não é possível fazer reserva aos domingos.", false);
+      return;
+    }
+
     el("btn").disabled = true;
     el("btn").textContent = "Salvando…";
 
@@ -214,7 +286,6 @@
       if (!res.ok || !out.ok) {
         setMsg(out.error || "Não foi possível registrar. Tente novamente.", false);
       } else {
-        // Confirmación final
         showConfirmation(payload);
       }
     } catch (err) {
