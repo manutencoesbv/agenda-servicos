@@ -44,6 +44,7 @@
     .btn2 { background:#111; color:#fff; }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <div class="card">
@@ -82,8 +83,8 @@
       <label for="endereco">Local / Endereço</label>
       <input id="endereco" type="text" placeholder="Rua, número, bairro, cidade" required />
 
-      <label for="observacao">Descrição Serviço</label>
-      <textarea id="observacao" placeholder="Ex.: vazamento na pia, troca de reparo do chuveiro.."></textarea>
+      <label for="observacao">Descrição do serviço (opcional)</label>
+      <textarea id="observacao" placeholder="Ex.: vazamento na pia, troca de reparo do chuveiro…"></textarea>
 
       <div class="check">
         <input id="urgencia" type="checkbox" />
@@ -99,7 +100,7 @@
       <button id="btn" class="btn2">Confirmar agendamento</button>
 
       <div id="msg"></div>
-      <div class="small">Horários disponíveis: 13:00–18:00 (turnos de 1 hora). Não atendemos aos domingos.</div>
+      <div class="small">Horários disponíveis: 13:00–18:00 (turnos de 1h). Não atendemos aos domingos.</div>
     </div>
   </div>
 
@@ -115,9 +116,9 @@
 
 <script>
   // =================== CONFIG ===================
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxLVQomngUoq8skxDtOw-Za-VyMf4R9kRW7oZEogRTGw0bMm57rANffcl96ZzpBWzKG/exec"; // termina em /exec
-  const PIN = "1234"; // mesmo PIN do Apps Script
-  const ALLOW_FUTURE_DAYS = 30; // deve bater com o Apps Script
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxLVQomngUoq8skxDtOw-Za-VyMf4R9kRW7oZEogRTGw0bMm57rANffcl96ZzpBWzKG/exec";
+  const PIN = "1234";              // deve ser igual ao SECRET_PIN do Apps Script
+  const ALLOW_FUTURE_DAYS = 30;    // deve bater com o Apps Script
   // =============================================
 
   const el = (id) => document.getElementById(id);
@@ -125,14 +126,14 @@
   const overlay = el("overlay");
   const resumo = el("resumo");
 
-  el("urgencia").addEventListener("change", (e) => {
-    el("extra").style.display = e.target.checked ? "block" : "none";
-  });
-
   function setMsg(text, ok=true) {
     msgBox.className = "msg " + (ok ? "ok" : "err");
     msgBox.textContent = text;
   }
+
+  el("urgencia").addEventListener("change", (e) => {
+    el("extra").style.display = e.target.checked ? "block" : "none";
+  });
 
   function ymd(dateObj){
     const y = dateObj.getFullYear();
@@ -164,6 +165,9 @@
     if (p.urgencia && p.horario_especial) {
       lines.push(`<p><strong>Horário especial:</strong> ${escapeHtml(p.horario_especial)}</p>`);
     }
+    if (p.server_row) {
+      lines.push(`<p><strong>Protocolo:</strong> #${escapeHtml(p.server_row)}</p>`);
+    }
     resumo.innerHTML = lines.join("");
     overlay.style.display = "flex";
   }
@@ -184,81 +188,76 @@
   el("nova").addEventListener("click", () => {
     overlay.style.display = "none";
     resetForm(true);
-    refreshBookedHours(); // para actualizar bloqueos
+    refreshBookedHours();
   });
 
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) overlay.style.display = "none";
   });
 
-  // Limites del calendario: hoy .. hoy+30
+  // ===== Init date range (today..today+30). If today is Sunday, default to Monday =====
   (function initDateLimits(){
-  const today = new Date();
+    const today = new Date();
 
-  // si hoy es domingo, arrancar en lunes
-  let initial = new Date(today);
-  if (initial.getDay() === 0) {
-    initial.setDate(initial.getDate() + 1);
-  }
+    let initial = new Date(today);
+    if (initial.getDay() === 0) initial.setDate(initial.getDate() + 1); // domingo -> lunes
 
-  const min = ymd(today);
-  const maxDate = new Date(today);
-  maxDate.setDate(maxDate.getDate() + ALLOW_FUTURE_DAYS);
+    const min = ymd(today);
+    const maxDate = new Date(today);
+    maxDate.setDate(maxDate.getDate() + ALLOW_FUTURE_DAYS);
 
-  el("data").min = min;
-  el("data").max = ymd(maxDate);
+    el("data").min = min;
+    el("data").max = ymd(maxDate);
+    el("data").value = ymd(initial);
 
-  el("data").value = ymd(initial);
+    el("dateNote").textContent =
+      `Você pode agendar de hoje até ${ALLOW_FUTURE_DAYS} dias à frente. (Não atendemos aos domingos.)`;
+  })();
 
-  el("dateNote").textContent =
-    `Você pode agendar de hoje até ${ALLOW_FUTURE_DAYS} dias à frente. (Não atendemos aos domingos.)`;
-})();
-
-  // Bloqueo de horas ocupadas + domingo
+  // ===== Disable booked hours + block Sunday selection =====
   async function refreshBookedHours(){
-  const date = el("data").value;
-  if (!date) return;
+    const date = el("data").value;
+    if (!date) return;
 
-  const dt = new Date(date + "T00:00:00");
+    const dt = new Date(date + "T00:00:00");
+    if (dt.getDay() === 0) {
+      alert("Não é possível agendar serviços para domingo. Escolha outro dia.");
+      const next = new Date(dt);
+      next.setDate(next.getDate() + 1);
+      el("data").value = ymd(next);
+      return refreshBookedHours();
+    }
 
-  // si el usuario selecciona domingo
-  if (dt.getDay() === 0) {
-    alert("Não é possível agendar serviços para domingo. Escolha outro dia.");
+    const hourSelect = el("hora");
+    [...hourSelect.options].forEach(opt => { if (opt.value) opt.disabled = false; });
 
-    const next = new Date(dt);
-    next.setDate(next.getDate() + 1);
+    const url = `${SCRIPT_URL}?k=${encodeURIComponent(PIN)}&date=${encodeURIComponent(date)}`;
 
-    el("data").value = ymd(next);
-    return refreshBookedHours();
+    try {
+      const res = await fetch(url, { method: "GET" });
+      const out = await res.json().catch(() => ({}));
+
+      if (!out.ok) {
+        // si PIN inválido o error backend, informamos (no bloqueamos)
+        console.log("GET error:", out);
+        return;
+      }
+
+      const booked = new Set(out.booked || []);
+      [...hourSelect.options].forEach(opt => {
+        if (booked.has(opt.value)) opt.disabled = true;
+      });
+
+      if (booked.has(hourSelect.value)) hourSelect.value = "";
+    } catch (e) {
+      console.log("GET fetch failed:", e);
+    }
   }
-
-  const hourSelect = el("hora");
-  [...hourSelect.options].forEach(opt => {
-    if (opt.value) opt.disabled = false;
-  });
-
-  const url = `${SCRIPT_URL}?k=${encodeURIComponent(PIN)}&date=${encodeURIComponent(el("data").value)}`;
-
-  try {
-    const res = await fetch(url);
-    const out = await res.json();
-    if (!out.ok) return;
-
-    const booked = new Set(out.booked || []);
-    [...hourSelect.options].forEach(opt => {
-      if (booked.has(opt.value)) opt.disabled = true;
-    });
-
-    if (booked.has(hourSelect.value)) hourSelect.value = "";
-  } catch (e) {
-    // backend protege igual
-  }
-}
 
   el("data").addEventListener("change", refreshBookedHours);
   setTimeout(refreshBookedHours, 0);
 
-  // Enviar reserva
+  // ===== Submit reservation =====
   el("btn").addEventListener("click", async () => {
     msgBox.className = "";
     msgBox.textContent = "";
@@ -279,10 +278,10 @@
       return;
     }
 
-    // Bloquear domingo también acá (por si acaso)
+    // bloquea domingo (por si acaso)
     const dt = new Date(payload.data + "T00:00:00");
     if (dt.getDay() === 0) {
-      setMsg("Não é possível fazer reserva aos domingos.", false);
+      setMsg("Não é possível agendar serviços para domingo.", false);
       return;
     }
 
@@ -297,18 +296,26 @@
       });
 
       const out = await res.json().catch(() => ({}));
+      console.log("POST response:", out);
+
       if (!res.ok || !out.ok) {
         setMsg(out.error || "Não foi possível registrar. Tente novamente.", false);
-      } else {
-  console.log("POST response:", out);
-  // si el servidor no devuelve debug, no confirmamos
-  if (!out.debug || !out.debug.rowCreated) {
-    setMsg("Não foi possível confirmar gravação na planilha. Tente novamente.", false);
-    return;
-  }
-  showConfirmation(payload);
-}
+        return;
       }
+
+      // ✅ Solo confirmamos si el servidor devuelve una fila creada
+      const rowCreated = out?.debug?.rowCreated;
+      if (!rowCreated) {
+        setMsg("Não foi possível confirmar gravação na planilha. Tente novamente.", false);
+        return;
+      }
+
+      payload.server_row = rowCreated; // muestra protocolo
+      showConfirmation(payload);
+
+      // refrescar horas bloqueadas (ya queda tomado)
+      await refreshBookedHours();
+
     } catch (err) {
       setMsg("Erro de conexão. Verifique sua internet e tente novamente.", false);
     } finally {
