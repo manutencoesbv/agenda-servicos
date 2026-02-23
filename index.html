@@ -300,7 +300,14 @@
       if (!res.ok || !out.ok) {
         setMsg(out.error || "Não foi possível registrar. Tente novamente.", false);
       } else {
-        showConfirmation(payload);
+  console.log("POST response:", out);
+  // si el servidor no devuelve debug, no confirmamos
+  if (!out.debug || !out.debug.rowCreated) {
+    setMsg("Não foi possível confirmar gravação na planilha. Tente novamente.", false);
+    return;
+  }
+  showConfirmation(payload);
+}
       }
     } catch (err) {
       setMsg("Erro de conexão. Verifique sua internet e tente novamente.", false);
