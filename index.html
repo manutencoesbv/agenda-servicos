@@ -259,70 +259,74 @@
 
   // ===== Submit reservation =====
   el("btn").addEventListener("click", async () => {
-    msgBox.className = "";
-    msgBox.textContent = "";
 
-    const payload = {
-      k: PIN,
-      servico: el("servico").value.trim(),
-      data: el("data").value,
-      hora: el("hora").value,
-      endereco: el("endereco").value.trim(),
-      observacao: el("observacao").value.trim(),
-      urgencia: el("urgencia").checked,
-      horario_especial: el("horario_especial")?.value?.trim() || ""
-    };
+  msgBox.className = "";
+  msgBox.textContent = "";
 
-    if (!payload.servico || !payload.data || !payload.hora || !payload.endereco) {
-      setMsg("Por favor, preencha: serviço, dia, horário e endereço.", false);
+  const payload = {
+    k: PIN,
+    servico: el("servico").value.trim(),
+    data: el("data").value,
+    hora: el("hora").value,
+    endereco: el("endereco").value.trim(),
+    observacao: el("observacao").value.trim(),
+    urgencia: el("urgencia").checked,
+    horario_especial: el("horario_especial")?.value?.trim() || ""
+  };
+
+  if (!payload.servico || !payload.data || !payload.hora || !payload.endereco) {
+    setMsg("Por favor, preencha todos os campos obrigatórios.", false);
+    return;
+  }
+
+  const dt = new Date(payload.data + "T00:00:00");
+  if (dt.getDay() === 0) {
+    setMsg("Não é possível agendar serviços para domingo.", false);
+    return;
+  }
+
+  el("btn").disabled = true;
+  el("btn").textContent = "Salvando...";
+
+  try {
+
+    const response = await fetch(SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await response.json();
+
+    console.log("POST result:", result);
+
+    if (!response.ok || !result.ok) {
+      setMsg(result.error || "Erro ao salvar reserva.", false);
       return;
     }
 
-    // bloquea domingo (por si acaso)
-    const dt = new Date(payload.data + "T00:00:00");
-    if (dt.getDay() === 0) {
-      setMsg("Não é possível agendar serviços para domingo.", false);
+    if (!result.debug || !result.debug.rowCreated) {
+      setMsg("Reserva não confirmada na planilha.", false);
       return;
     }
 
-    el("btn").disabled = true;
-    el("btn").textContent = "Salvando…";
+    payload.server_row = result.debug.rowCreated;
+    showConfirmation(payload);
+    await refreshBookedHours();
 
-    try {
-      const res = await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify(payload)
-      });
+  } catch (error) {
 
-      const out = await res.json().catch(() => ({}));
-      console.log("POST response:", out);
+    console.error(error);
+    setMsg("Erro de conexão. Tente novamente.", false);
 
-      if (!res.ok || !out.ok) {
-        setMsg(out.error || "Não foi possível registrar. Tente novamente.", false);
-        return;
-      }
+  } finally {
 
-      // ✅ Solo confirmamos si el servidor devuelve una fila creada
-      const rowCreated = out?.debug?.rowCreated;
-      if (!rowCreated) {
-        setMsg("Não foi possível confirmar gravação na planilha. Tente novamente.", false);
-        return;
-      }
+    el("btn").disabled = false;
+    el("btn").textContent = "Confirmar agendamento";
 
-      payload.server_row = rowCreated; // muestra protocolo
-      showConfirmation(payload);
+  }
 
-      // refrescar horas bloqueadas (ya queda tomado)
-      await refreshBookedHours();
-
-    } catch (err) {
-      setMsg("Erro de conexão. Verifique sua internet e tente novamente.", false);
-    } finally {
-      el("btn").disabled = false;
-      el("btn").textContent = "Confirmar agendamento";
-    }
-  });
+});
 </script>
 </body>
 </html>
